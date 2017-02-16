@@ -9,3 +9,11 @@ I'm working on other things at the moment and have not had time to write documen
 in the meantime, a variety of visual tests are posted at `qcd.phy.duke.edu/frzout/tests.html <http://qcd.phy.duke.edu/frzout/tests.html>`_.
 
 If you're in the Duke group and want to use this, please ask me!
+
+To do
+-----
+- assorted small items in code
+- PDG 2016 data
+- travis
+- docs
+- release
