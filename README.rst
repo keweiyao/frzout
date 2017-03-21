@@ -17,3 +17,10 @@ To do
 - travis
 - docs
 - release
+- "realistic surface" test
+- thread safety
+
+  - random number generator
+  - lock HRG before "prepare" functions in sample()
+
+- pickleable Surface and HRG
