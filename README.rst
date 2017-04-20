@@ -13,14 +13,8 @@ If you're in the Duke group and want to use this, please ask me!
 To do
 -----
 - assorted small items in code
-- PDG 2016 data
 - travis
 - docs
 - release
 - "realistic surface" test
-- thread safety
-
-  - random number generator
-  - lock HRG before "prepare" functions in sample()
-
 - pickleable Surface and HRG
