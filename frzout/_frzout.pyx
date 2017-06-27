@@ -1039,8 +1039,8 @@ cdef inline double eval_poly(
 
     # Horner's method using fused multiply-add: fma(x, y, z) = x*y + z
     for k in range(c.shape[0]):
-        result = math.fma(result, x, c[k, i, d])
-
+        #result = math.fma(result, x, c[k, i, d])
+        result = result*x + c[k,i,d]
     return result
 
 
