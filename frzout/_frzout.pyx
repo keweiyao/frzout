@@ -4,6 +4,7 @@ import threading
 import warnings
 
 import numpy as np
+cimport numpy as np
 from scipy.interpolate import CubicSpline
 
 from .species import species_dict, _normalize_species
@@ -1251,6 +1252,75 @@ cdef void freestream(Particle* part, double t) nogil:
     part.x.y += part.p.y * t_over_E
     part.x.z += part.p.z * t_over_E
 
+cdef FourVector flux(FourVector u, double h, double p, FourVector sigma):
+    cdef np.ndarray[np.float_t, ndim=2] Tmunu = \
+      h*np.outer([u.t, u.x, u.y, u.z], [u.t, u.x, u.y, u.z])
+    Tmunu[0,0] -= p;
+    cdef int i
+    for i in range(1,4):
+        Tmunu[i,i] += p;
+    cdef FourVector F
+    F.t = np.dot(Tmunu[0,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    F.x = np.dot(Tmunu[1,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    F.y = np.dot(Tmunu[2,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    F.z = np.dot(Tmunu[3,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    return F
+
+cpdef event_planes(
+    Surface surface, HRG hrg
+):
+    """
+    WK: a function an to integrated energy momentum flux from hyper surface 
+    give an analytic estimate of the event planes (assuming hadronic process 
+    changes event plane angles little).
+    Currently I use only ideal part of T^{\mu\nu} to calculate these angles
+    For a given freezout element, the four momentum go through it is:
+      P^\mu = T^{\mu\nu} g_{\nu\rho} d\sigma^{rho}
+            = [E, Px, Py, Pz], Px = PT*cos(Phi), Py = PT*sin(Phi)
+    The momentum space determines the event plane angles via:
+      tan(Psi_n) = [ \sum_ele W*sin(n*Phi) ] / [ \sum_ele W*cos(n*Phi) ]
+    The W is chosen to be the invariant mass of the energy flow:
+      W = P^\mu*P_\mu
+    """
+    cdef double T0 = hrg.T # T_switch
+    cdef double p0 = hrg.pressure() # pressure at T_switch
+    cdef double h0 = hrg.energy_density() + p0 # Enthalpy at T_switch
+
+    # I won't find the center of mass, since the initial transverse momentum 
+    # is 0.
+    Qvec = { n: {'x': 0., 'y': 0.} for n in [2,3,4,5]}
+    Psi = {}
+    cdef FourVector F
+    cdef double pt, nx, ny, \
+                    nx2, ny2, nxny, \
+                    nx3, ny3,\
+                    nx4, nx2ny2, ny4, W
+    for ele in surface.data[:surface.n]:
+        F = flux(ele.u, h0, p0, ele.sigma)
+        # Use the invariant mass as a crude estimate of how much particles 
+        # are produced
+        W = fourvec.dot(&F, &F)
+        pt = np.sqrt(F.x**2 + F.y**2)
+        nx = F.x/pt; ny = F.y/pt
+        nx2 = nx**2; ny2 = ny**2; nxny = nx*ny;
+        nx3 = nx2*nx; ny3 = ny2*ny; nx2ny2 = nx2*ny2
+        nx4 = nx2**2; ny4 = ny2**2
+
+        Qvec[2]['x'] += W * (ny2 - nx2)
+        Qvec[2]['y'] += W * 2. * nxny
+
+        Qvec[3]['x'] += W*(ny3 - 3.*ny*nx2);
+        Qvec[3]['y'] += W*(3.*nx*ny2 - nx3);
+
+        Qvec[4]['x'] += W * (nx4 + ny4 - 6.*nx2ny2);
+        Qvec[4]['y'] += W * 4.*nxny*(ny2 - nx2);
+
+        Qvec[5]['x'] += W * ny*(5.*nx4 - 10.*nx2ny2 + ny4);
+        Qvec[5]['y'] += W * nx*(nx4 - 10.*nx2ny2 + 5.*ny4);
+
+    for n in [2,3,4,5]:
+        Psi[n] = np.arctan2(Qvec[n]['y'], Qvec[n]['x'])
+    return Psi
 
 cdef void _sample(
     Surface surface, HRG hrg, RNG* rng, ParticleArray particles
