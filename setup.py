@@ -3,6 +3,7 @@
 
 from setuptools import setup, Extension
 from Cython.Build import cythonize
+import numpy
 
 with open('README.rst') as f:
     long_description = f.read()
@@ -33,6 +34,7 @@ setup(
     package_data={'frzout': ['mass_width_2017.mcd']},
     ext_modules=ext_modules,
     install_requires=['numpy'],
+    include_dirs=[numpy.get_include()],
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Science/Research',

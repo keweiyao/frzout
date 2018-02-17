@@ -4,6 +4,7 @@ import threading
 import warnings
 
 import numpy as np
+cimport numpy as np
 from scipy.interpolate import CubicSpline
 
 from .species import species_dict, _normalize_species
@@ -31,7 +32,7 @@ cdef extern from "quadrature.h":
     QuadPoint* quadpts_p
 
 
-__all__ = ['Surface', 'HRG', 'sample']
+__all__ = ['Surface', 'HRG', 'sample', 'energy_flow_planes']
 
 
 cdef struct ShearTensor:
@@ -192,6 +193,7 @@ cdef class Surface:
             warnings.warn(
                 'total freeze-out volume is negative -- '
                 'ensure that sigma is covariant (sigma_mu)'
+
             )
 
 
@@ -1256,6 +1258,83 @@ cdef void freestream(Particle* part, double t) nogil:
     part.x.y += part.p.y * t_over_E
     part.x.z += part.p.z * t_over_E
 
+cdef FourVector flux(FourVector u, double h, double p0, ShearTensor pi,
+                     double Pi, FourVector sigma):
+    cdef double p = p0 + Pi
+    cdef np.ndarray[np.float_t, ndim=2] Tmunu = \
+      h*np.outer([u.t, u.x, u.y, u.z], [u.t, u.x, u.y, u.z])
+    Tmunu[0,0] -= p;
+    cdef int i
+    for i in range(1,4):
+        Tmunu[i,i] += p;
+    # Boost back to labframe, u = [u0, -u1, -u2, -u3]
+    cdef np.ndarray[np.float_t, ndim=2] L = np.zeros([4,4])
+    L[0][0] = u.t
+    L[1][1] = 1 + u.x*u.x/(1 + u.t)
+    L[2][2] = 1 + u.y*u.y/(1 + u.t)
+    L[3][3] = 1 + u.z*u.z/(1 + u.t)
+
+    L[0][1] = L[1][0] = u.x
+    L[0][2] = L[2][0] = u.y
+    L[0][3] = L[3][0] = u.z
+    L[1][2] = L[2][1] = u.x*u.y/(1 + u.t)
+    L[1][3] = L[3][1] = u.x*u.z/(1 + u.t)
+    L[2][3] = L[3][2] = u.y*u.z/(1 + u.t)
+   
+    cdef np.ndarray[np.float_t, ndim=2] pi_lrf = np.zeros([4,4])
+    pi_lrf[1,1] = pi.xx; pi_lrf[2,2] = pi.yy; pi_lrf[3,3] = pi.zz
+    pi_lrf[1,2] = pi_lrf[2,1] = pi.xy
+    pi_lrf[1,3] = pi_lrf[3,1] = pi.xz 
+    pi_lrf[2,3] = pi_lrf[3,2] = pi.yz 
+    Tmunu += np.matmul(np.matmul(L, pi_lrf), L) 
+   
+    cdef FourVector F
+    F.t = np.dot(Tmunu[0,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    F.x = np.dot(Tmunu[1,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    F.y = np.dot(Tmunu[2,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    F.z = np.dot(Tmunu[3,:], [sigma.t, -sigma.x, -sigma.y, -sigma.x])
+    return F
+
+cpdef energy_flow_planes(
+    Surface surface, HRG hrg
+):
+    """
+    WK: a function an to integrated energy momentum flux from hyper surface 
+    give an analytic estimate of the event planes (assuming hadronic process 
+    changes event plane angles little).
+    Currently I use only ideal part of T^{\mu\nu} to calculate these angles
+    For a given freezout element, the four momentum go through it is:
+      P^\mu = T^{\mu\nu} g_{\nu\rho} d\sigma^{rho}
+            = [E, Px, Py, Pz], Px = PT*cos(Phi), Py = PT*sin(Phi)
+    The momentum space determines the event plane angles via:
+      tan(Psi_n) = [ \sum_ele W*sin(n*Phi) ] / [ \sum_ele W*cos(n*Phi) ]
+    The W is chosen to be the invariant mass of the energy flow:
+      W = P^\mu*P_\mu
+    """
+    cdef double T0 = hrg.T # T_switch
+    cdef double p0 = hrg.pressure() # pressure at T_switch
+    cdef double h0 = hrg.energy_density() + p0 # Enthalpy at T_switch
+
+    # I won't find the center of mass, since the initial transverse momentum 
+    # is 0.
+    Qvec = { n: {'x': 0., 'y': 0.} for n in [2,3,4,5]}
+    Psi = {}
+    cdef FourVector F
+    cdef double w, phi
+    for ele in surface.data[:surface.n]:
+        F = flux(ele.u, h0, p0, ele.pi, ele.Pi, ele.sigma)
+        # Use the invariant mass as a crude estimate of how much particles 
+        # are produced
+        w = np.sqrt(F.x**2 + F.y**2)
+        phi = np.arctan2(F.y, F.x)
+        for n in [2,3,4,5]:
+            Qvec[n]['x'] += w*np.cos(n*phi)
+            Qvec[n]['y'] += w*np.sin(n*phi)
+
+    #ModPsi = [np.pi*2./n for n in [2,3,4,5]]
+    for n in [2,3,4,5]:
+        Psi[n] = np.arctan2(Qvec[n]['y'], Qvec[n]['x'])/n
+    return Psi
 
 cdef void _sample(
     Surface surface, HRG hrg, RNG* rng, ParticleArray particles
